@@ -1,0 +1,6 @@
+<?xml version="1.0"?>
+
+<launch>
+  <node pkg="pcie_can" type="pcie_can_node" name="pcie_can_node" output="screen"/>
+
+</launch>
