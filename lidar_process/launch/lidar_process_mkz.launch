@@ -1,0 +1,36 @@
+<launch>
+  
+  <node pkg="lidar_process" name="lidar_process_node" type="lidar_process_node" ns="front_lidar">
+    <param name="crop_x_min" value="0.2"/>
+    <param name="crop_x_max" value="10.0"/>
+    <param name="crop_y_min" value="-2.5"/>
+    <param name="crop_y_max" value="2.5"/>
+    <param name="crop_z_min" value="-0.5"/>
+    <param name="crop_z_max" value="3.5"/>
+    <param name="cluster_tolerance" value="0.3"/>
+    <param name="cluster_min_size" value="1"/>
+    <param name="cluster_max_size" value="70000"/>
+    <param name="frame_id" value="laser_link"/>
+    <param name="pointcloud_sub_topic" value="/front/velodyne_points"/>
+    <param name="obstacle_pub_topic" value="/front/obstacles"/>
+  </node>
+
+  <node pkg="lidar_process" name="lidar_process_node" type="lidar_process_node" ns="back_lidar">
+    <param name="crop_x_min" value="-10.0"/>
+    <param name="crop_x_max" value="0.2"/>
+    <param name="crop_y_min" value="-2.5"/>
+    <param name="crop_y_max" value="2.5"/>
+    <param name="crop_z_min" value="-0.5"/>
+    <param name="crop_z_max" value="3.5"/>
+    <param name="cluster_tolerance" value="0.3"/>
+    <param name="cluster_min_size" value="1"/>
+    <param name="cluster_max_size" value="70000"/>
+    <param name="frame_id" value="laser_link"/>
+    <param name="pointcloud_sub_topic" value="/back/velodyne_points"/>
+    <param name="obstacle_pub_topic" value="/back/obstacles"/>
+  </node>
+
+<!--
+  <node pkg="tf" type="static_transform_publisher" name="world_lidar" args="6.2 0 0 0 0 0 /world /front_laser_link 100" />
+-->
+</launch>
