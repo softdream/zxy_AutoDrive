@@ -1,0 +1,321 @@
+#include <ros/ros.h>
+#include <iostream>
+#include <thread>
+#include <boost/thread.hpp>
+#include <auto_driver_msgs/ImuData.h>
+#include <auto_driver_msgs/ControlCmd.h>
+//#include <telecontrol/ChangeMode.h>
+#include <autodrive/EmrgStop.h>
+#include <autodrive/Dump.h>
+#include <autodrive/NetError.h>
+#include <autodrive/StartRecord.h>
+#include <autodrive/StopRecord.h>
+#include "dataType.h"
+#include "client.h"
+
+typedef enum{
+	keyUp,
+	keyDown,
+	waitKeyUp,
+	waitKeyDown,
+}KeyState; // indicate the state of the key on the chair
+
+
+typedef enum{
+	connected,
+	unconnected,
+}LinkState; // the link state between the TCP server and the client
+
+Client client;// define a client 
+int client_fd;
+LinkState linkstate = unconnected;
+
+
+float steeringLimit = 0; // steering_limit
+
+HeartBeats heart;// define a heartbearts package message
+void sendHeartBeats()
+{
+	heart.start1 = 'c';
+	heart.start2 = 'c';
+	heart.start3 = 'c';
+	heart.start4 = 'c';
+	heart.beating = 1;
+	while(1){
+		if( linkstate == connected ){
+			if( client.sendData<HeartBeats>( client_fd, heart ) ){
+				std::cout<<"fd: "<<client_fd<<std::endl;	
+			}
+			else{
+				std::cerr<<"send HeartBearts failed ..."<<std::endl;
+			}
+		}
+		sleep( 2 );
+	}
+}
+
+bool GearNeedChange = false;
+HarvesterDataType previous_cmd;
+int8_t targetGear = 0;
+/* convert the message type of T to the type of telecontrol::ControlCmd */
+/* the message from the server need to be converted to the control command  */
+template< typename T >
+void msg2ControlCmd( T &cmd1, auto_driver_msgs::ControlCmd &cmd2 )
+{
+	cmd2.TargetThrottle = cmd1.x2 * 100;
+	cmd2.TargetBrake = cmd1.x3 * 100;
+
+	cmd2.TargetSteering =  cmd1.x1 * steeringLimit;
+	//std::cout<<"steering limit = "<<steeringLimit<<std::endl;
+	
+	if( cmd1.io20 == 0 && cmd1.io21 == 0 ){
+		cmd2.TargetMode = 0;
+	}
+	else if( cmd1.io20 == 0 && cmd1.io21 == 1 ){
+		cmd2.TargetMode = 1;
+	}
+	else if( cmd1.io20 == 1 && cmd1.io21 == 0 ){
+		cmd2.TargetMode = 2;
+	}
+	
+	if( cmd1.io4 == 0 ) {
+		cmd2.TargetGear = 7;// R
+		GearNeedChange = false;
+	}
+	else if( cmd1.io4 == 1 ) {
+		cmd2.TargetGear = 0; // N
+		GearNeedChange = false;
+	}
+	else if( cmd1.io4 == 6 ) {
+		cmd2.TargetGear = 9; // P
+		GearNeedChange = false;
+	}
+
+	if( cmd1.io4 == 2 ) {// D
+		if( GearNeedChange == false ) {
+			cmd2.TargetGear = 6;
+			targetGear = 1;
+		}
+		else cmd2.TargetGear = targetGear;
+	}
+	if( previous_cmd.io4 == 2 && cmd1.io4 == 3  ) {
+		targetGear ++;
+		if( targetGear > 6 ) targetGear = 6;
+		cmd2.TargetGear = targetGear;
+		GearNeedChange = true;
+	}
+	else if( previous_cmd.io4 == 2 && cmd1.io4 == 4 ){
+		targetGear --;
+		if( targetGear < 1 ) targetGear = 1;
+		cmd2.TargetGear = targetGear;
+		GearNeedChange = true;
+	}
+	/*else if( cmd1.io4 == 3 || cmd1.io4 == 4 ){
+		cmd2.TargetGear = targetGear;
+	}*/
+
+	cmd2.TargetSpeed = 0;
+	cmd2.TargetEpb = 0;
+	cmd2.TargetPto = cmd1.io15;
+	
+	if( cmd1.io19 == 1 ) cmd2.TargetEmrgStop = 1;
+	else if( cmd1.io19 == 0 ) cmd2.TargetEmrgStop = 0;
+
+	previous_cmd = cmd1;
+}
+
+/* convert the type of T to the type of telecontrol::Dump */
+/* judge if there is  a dump command */
+KeyState dumpNeedBeCalledOnce = waitKeyDown;
+template< typename T >
+void msg2Dump( T &msg, autodrive::Dump &srv )
+{
+	if( dumpNeedBeCalledOnce == waitKeyDown ){
+		if( msg.io20 == 1 && msg.io21 == 0 ){
+			srv.request.cmd = 1;
+			dumpNeedBeCalledOnce = keyDown;
+		}
+	}
+	if( dumpNeedBeCalledOnce == waitKeyUp ){
+		if( msg.io20 == 0 && msg.io21 == 1 ){
+			srv.request.cmd = 0;
+			dumpNeedBeCalledOnce = keyUp;
+		}
+	}
+}
+
+
+/* convert the type of T to the type of telecontrol::StartRecord and telecontrol::StopRecord */
+/* indicate if there is a startRecord or stopRecord command */
+KeyState RecordNeedBeCalledOnce = waitKeyDown;
+template< typename T >
+void msg2StartRecord( T &msg, autodrive::StartRecord &srv )
+{
+	if( RecordNeedBeCalledOnce == waitKeyDown ){
+		if( msg.io19 == 1 ){
+			RecordNeedBeCalledOnce = keyDown;
+		}
+	}
+	if( RecordNeedBeCalledOnce == waitKeyUp ){
+		if( msg.io19 == 0 ){
+			RecordNeedBeCalledOnce = keyUp;
+		}
+	}
+}
+
+/* this function is not be used */
+template< typename T >
+void msg2StopRecord( T &msg, autodrive::StopRecord &srv )
+{
+	
+}
+
+/* IMU call back funtion */
+void IMUCallback( const auto_driver_msgs::ImuData::ConstPtr &imu )
+{
+	MotionPlatformDataType imu_send;
+        imu_send.start1 = 'a';
+        imu_send.start2 = 'b';
+        imu_send.start3 = 'b';
+        imu_send.cmd = 6;
+        
+        imu_send.rx = imu->Roll;
+        imu_send.ry = imu->Pitch;
+        imu_send.rz = imu->Yaw;
+        
+        imu_send.tax = imu->AccX;
+        imu_send.tay = imu->AccY;
+        imu_send.taz = imu->AccZ;
+        
+        imu_send.rvx = imu->OmegaX;
+        imu_send.rvy = imu->OmegaY;
+        imu_send.rvz = imu->OmegaZ;
+
+        int sendNum = client.sendData<MotionPlatformDataType>( client_fd, imu_send );
+	if( sendNum > 0 ){
+		std::cout<<"send IMU data to the server ..."<<std::endl;
+	}
+	else{
+		std::cerr<<"send IMU data failed ..."<<std::endl;	
+	}
+}
+
+
+/* thread of send IMU data to the TCP server */
+void sendIMUData()
+{
+	ros::NodeHandle n;
+	ros::Subscriber sub = n.subscribe<auto_driver_msgs::ImuData>("imu", 1000, IMUCallback);
+	ros::spin();
+}
+
+int main( int argc, char **argv )
+{
+	int error_count = 0;
+	ROS_INFO( "Program started ..." );
+	ros::init( argc, argv, "telecontrol" );
+	ros::NodeHandle n;	
+
+	n.getParam( "steering_limit", steeringLimit );
+
+	/* Publish the control command */
+	ros::Publisher pub = n.advertise<auto_driver_msgs::ControlCmd>( "/tele/control_cmd", 1);
+
+	/* service of the Dump  */
+	ros::ServiceClient DumpClient = n.serviceClient<autodrive::Dump>("/chassis/dump");
+	autodrive::Dump DumpSrv;
+
+	/* service of the NetError */
+	ros::ServiceClient NetErrorClient = n.serviceClient<autodrive::NetError>("/networkerror");
+	autodrive::NetError NetErrorSrv;
+
+	/* service of the StartRecord */
+	ros::ServiceClient StartRecordClient = n.serviceClient<autodrive::StartRecord>( "/startRecord" );
+	autodrive::StartRecord startRecordSrv;
+
+	/* service of the StopRecord */
+	ros::ServiceClient StopRecordClient = n.serviceClient<autodrive::StopRecord>( "/stopRecord" );
+	autodrive::StopRecord stopRecordSrv;
+
+	/* start the TCP client */
+	client_fd = client.initClient();
+	if( client_fd  > 0){
+		linkstate = connected;
+	}
+
+	/* create two threads */
+	std::thread sendHeart( sendHeartBeats );
+	std::thread sendIMU( sendIMUData );	
+
+	while(ros::ok()){
+		if( linkstate == connected ){
+			int ret = client.recvFromServer( client_fd );// receive the data from the TCP server
+			if ( ret == 1 ){
+				HarvesterDataType harvester = client.getHarvester();// get the harvester data 
+	
+				msg2Dump<HarvesterDataType>( harvester, DumpSrv );				
+				if( dumpNeedBeCalledOnce == keyDown ){	
+					if( DumpClient.call( DumpSrv ) ){// if the key is be pressed, call the Dump service
+						std::cout<<"call the dump service successfully ..."<<std::endl;	
+					} 
+					dumpNeedBeCalledOnce = waitKeyUp;
+				}
+				else if( dumpNeedBeCalledOnce == keyUp ){// if the key is be unpressed, call the Dump service
+					if( DumpClient.call( DumpSrv ) ){
+						std::cout<<"call the dump service successfully ..."<<std::endl;
+					}
+					dumpNeedBeCalledOnce = waitKeyDown;
+				}
+
+				msg2StartRecord<HarvesterDataType>( harvester, startRecordSrv );
+				if( RecordNeedBeCalledOnce == keyDown ){
+					if( StartRecordClient.call( startRecordSrv ) ){ // if the key is be pressed, call the startRecord service
+						std::cout<<"call the startRecord service successfully ..."<<std::endl;
+					}
+					RecordNeedBeCalledOnce = waitKeyUp;
+				}
+				else if( RecordNeedBeCalledOnce  == keyUp ){
+					if( StopRecordClient.call( stopRecordSrv ) ){// if the key is be unpressed, call the stopRecord service
+						std::cout<<"call the stopRecord service successfully ..."<<std::endl;
+					}
+					RecordNeedBeCalledOnce = waitKeyDown;
+				}
+		
+				auto_driver_msgs::ControlCmd cmd;
+				msg2ControlCmd<HarvesterDataType>( harvester, cmd ); // process the message
+				pub.publish( cmd );// publish the command
+			}
+	
+			if( ret == 3 ){
+				error_count ++;
+				if( error_count == 5 ){
+					std::cerr<<"connection to the server is broken ..."<<std::endl;
+					error_count = 0;
+					linkstate = unconnected;
+					
+					NetErrorSrv.request.type = 1;
+					if( NetErrorClient.call( NetErrorSrv ) ){ // if the connection between the TCP server and the client, call the NetError service
+			
+					}
+					client.closeClient(); // close the socket
+				}
+			}
+		}
+		else if( linkstate == unconnected ) {
+			client_fd = client.initClient();// reconnect
+			if( client_fd > 0 ){
+				std::cout<<"reconnected client fd = "<<client_fd<<std::endl;
+				NetErrorSrv.request.type = 0;
+				if( NetErrorClient.call( NetErrorSrv ) ){ // if the connection between the TCP server and the client is be reconnected, call the NetError service 
+					
+				}
+				linkstate = connected;	// update the link state
+			}
+			else{
+				std::cerr<<"reconnected failed ..."<<std::endl;
+			}
+			sleep(2);
+		}
+	}
+	return 0;
+}

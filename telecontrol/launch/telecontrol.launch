@@ -1,0 +1,67 @@
+<?xml version="1.0"?>
+
+<launch>
+
+  <param name="device_id" value="4"/>
+  <param name="company_id" value="1"/>
+  <param name="project_id" value="1"/>
+  <param name="api_url" value="http://47.116.109.235:8019"/>
+  <param name="phone_number" type="string" value="18500465462"/>
+  <param name="mqtt_server" value="47.116.109.235"/>
+  <param name="mqtt_port" value="1883"/>
+  <param name="keep_alive" value="30.0"/>
+  <param name="report_interval" value="0.5"/>
+
+  <param name="steering_ratio" value="14.8"/>
+  <param name="min_brake_pedal" value="0.15"/>
+  <param name="max_brake_pedal" value="0.5"/>
+  <param name="min_throttle_pedal" value="0.15"/>
+  <param name="max_throttle_pedal" value="0.8"/>
+  <param name="vcu_timeout" value="0.5"/>
+  <param name="rtk_timeout" value="0.5"/>
+  <param name="imu_timeout" value="0.5"/>
+  <param name="lidar_timeout" value="1.5"/>
+  <param name="ipc_timeout" value="0.5"/>
+  <param name="tele_cmd_timeout" value="0.5"/>
+
+    <param name="roll_thresh" value="10.0"/>
+
+  <param name="base_frame_id" value="base_link"/>
+  <param name="odom_frame_id" value="world"/>
+
+  <param name="record_dist_thresh" value="1.0"/>
+  <param name="record_yaw_thresh" value="10.0"/>
+
+  <param name="steering_limit" value="32.0"/>
+  <param name="wheel_base" value="2.85"/>
+  <param name="start_auto_fs_thresh" value="10.0"/>
+  <param name="start_auto_fd_thresh" value="5.0"/>
+  <param name="goal_path_dist_thresh" value="10.0"/>
+  <param name="reach_dist_thresh" value="1.0"/>
+  <param name="queue_fs_thresh" value="5.0"/>
+  <param name="queue_fd_thresh" value="2.0"/>
+  <param name="max_ahead_num" value="3"/>
+  <param name="ahead_yaw_thresh" value="5.0"/>
+  <param name="interpolate_fd_thresh" value="0.3"/>
+  <param name="interpolate_yaw_thresh" value="10.0"/>
+  <param name="shovel_offset_x" value="0.0"/>
+  <param name="shovel_offset_y" value="5.0"/>
+  <param name="shovel_offset_yaw" value="10.0"/>
+
+  <include file="$(find lidar_process)/launch/lidar_process.launch" />
+  
+  <node name="chassis_interface_mkz" pkg="autodrive" type="chassis_interface_mkz.py"  output="screen" cwd="node"/>  
+  <node name="rtk" pkg="autodrive" type="rtk.py"  output="screen" cwd="node"/> 
+  <node name="imu" pkg="autodrive" type="imu.py"  output="screen" cwd="node"/>
+  <node name="path_recorder" pkg="autodrive" type="path_recorder.py"  output="screen" cwd="node"/>
+  <node name="auto_controller" pkg="autodrive" type="auto_controller.py"  output="screen" cwd="node"/>
+  <node name="telecontrol" pkg="telecontrol" type="telecontrol"  output="screen" cwd="node"/>
+  
+  <!-- 
+    <node name="net_interface" pkg="autodrive" type="net_interface.py"  output="screen" cwd="node"/>
+    <node name="rqt_reconfigure" pkg="rqt_reconfigure" type="rqt_reconfigure" />
+
+
+  -->
+
+</launch>
